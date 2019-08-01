@@ -16,7 +16,7 @@ from PIL import Image, ImageFont, ImageDraw
 from yolo3.model import yolo_eval, yolo_body, tiny_yolo_body
 from yolo3.utils import letterbox_image
 #function to do tracking
-
+from sort import iou,convert_bbox_to_z, convert_x_to_bbox,KalmanBoxTracker, associate_detections_to_trackers, Sort
 import os
 
 #from deep_sort import nn_matching
@@ -29,9 +29,9 @@ import os
 
 class YOLO(object):
     _defaults = {
-        "model_path": 'logs/tiny_weights_final.h5',
-        "anchors_path": 'model_data/tiny_yolo_anchors.txt',
-        "classes_path": 'model_data/voc_ppl_classes.txt',
+        "model_path": 'model_data/yolov3.h5',
+        "anchors_path": 'model_data/yolo_anchors.txt',
+        "classes_path": 'model_data/coco_classes.txt',
         "score" : 0.3,
         "iou" : 0.45,
         "model_image_size" : (416, 416),
@@ -121,11 +121,11 @@ class YOLO(object):
                                   size=np.floor(3e-2 * image.size[1] + 0.5).astype('int32'))
         thickness = (image.size[0] + image.size[1]) // 500
 
-        #label=str(int(box[4]))
+        label=str(int(box[4]))
         draw = ImageDraw.Draw(image)
-        #label_size = draw.textsize(label, font)
+        label_size = draw.textsize(label, font)
         left,top,right,bottom=box[:4]
-        #print(label, (left, top), (right, bottom))
+        print(label, (left, top), (right, bottom))
         #top=box[1]
         #left=box[0]
         #bottom=box[3]-box[1]
@@ -136,12 +136,12 @@ class YOLO(object):
         right = min(image.size[0], np.floor(right + 0.5).astype('int32'))
         # points_for_poly = geometry.box(left, top, right, bottom)
         # if poly_ground.intersects(points_for_poly):
-        #print(label, (left, top), (right, bottom))
+        print(label, (left, top), (right, bottom))
 
-        #if top - label_size[1] >= 0:
-        #    text_origin = np.array([left, top - label_size[1]])
-        #else:
-        #    text_origin = np.array([left, top + 1])
+        if top - label_size[1] >= 0:
+            text_origin = np.array([left, top - label_size[1]])
+        else:
+            text_origin = np.array([left, top + 1])
 
         # My kingdom for a good redistributable image drawing library.
         for i in range(thickness):
@@ -168,7 +168,7 @@ class YOLO(object):
         print(color)
         cv2.putText(frame, text, (left,top), cv2.FONT_HERSHEY_SIMPLEX, 1, color)
 
-    def detect_image(self, image):
+    def detect_image(self, image, frame, ppl_tracker):
 
         start = timer()
 
@@ -204,21 +204,19 @@ class YOLO(object):
         #_points = np.array(points)
         #_points = _points.reshape((-1, 1, 2))
         #cv2.polylines(image, [_points], True, (255, 255, 0))
-        num=0
         for i, c in reversed(list(enumerate(out_classes))):
-
             predicted_class = self.class_names[c]
             if predicted_class=='person':
                 box = out_boxes[i]   #[y1,x1,y2,x2]
-                y1, x1, y2, x2 = box
-                box = [x1, y1, x2, y2]  # x1,y1,x2,y2
-                self.draw_box_PIL(image,box)
-                num+=1
+                y1,x1,y2,x2=box
+                box=[x1,y1,x2,y2] #x1,y1,x2,y2
+                score = out_scores[i]
+                dets.append(box)
+        dets=np.array(dets)
 
-
-
-
-
+        trackers=ppl_tracker.update(dets)
+        for d in trackers:
+            image=self.draw_box_PIL(image,d)
 
         end = timer()
         print(end - start)
@@ -248,12 +246,12 @@ def detect_video(yolo, video_path, output_path=""):
     fps = "FPS: ??"
     avg_time=0
     prev_time = timer()
-    #ppl_tracker=Sort()
+    ppl_tracker=Sort()
     while True:
         return_value, frame = vid.read()
         t1 = timer()
         image = Image.fromarray(frame)
-        image, pred_time = yolo.detect_image(image)
+        image, pred_time = yolo.detect_image(image,frame,ppl_tracker)
         result = np.asarray(image)
         curr_time = timer()
         exec_time = curr_time - prev_time
